@@ -3,6 +3,7 @@ import glob
 import sqlite3
 import re
 import json
+import torch
 from datetime import datetime
 from typing import Optional, Dict, List
 
@@ -37,6 +38,11 @@ client_context = {}
 client_conversation_history = {}  # Histórico completo das conversas
 
 tool = language_tool_python.LanguageTool('pt-BR')
+
+print(torch.__version__)
+print(torch.cuda.is_available())
+print(torch.version.cuda)
+print(torch.cuda.device_count())
 
 # Palavras-chave para diferentes tipos de consulta - MELHORADAS
 KEYWORDS_MAPPING = {
@@ -317,7 +323,7 @@ def create_enhanced_retriever():
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        model_kwargs={'device': 'cpu'}
+        model_kwargs={'device': 'cuda'}
     )
 
     vectorstore = FAISS.from_documents(split_documents, embeddings)
