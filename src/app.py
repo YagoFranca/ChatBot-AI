@@ -4,13 +4,10 @@ import sqlite3
 import re
 import json
 import torch
+import language_tool_python
 from datetime import datetime
 from typing import Optional, Dict, List
-
-import language_tool_python
-import yaml
 from flask import Flask, request, jsonify
-from textblob import TextBlob
 from spellchecker import SpellChecker
 
 # LangChain
@@ -26,7 +23,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # Nome do banco de dados para dados de suporte
 DATABASE_PATH = "atendimentos.db"
-FEEDBACK_DB_PATH = "feedback.db"
+FEEDBACK_DB_PATH = "feedback_data/feedback.db"
 CONTEXT_DB_PATH = "context.db"
 
 spell = SpellChecker(language='pt')
@@ -38,11 +35,6 @@ client_context = {}
 client_conversation_history = {}  # Histórico completo das conversas
 
 tool = language_tool_python.LanguageTool('pt-BR')
-
-print(torch.__version__)
-print(torch.cuda.is_available())
-print(torch.version.cuda)
-print(torch.cuda.device_count())
 
 # Palavras-chave para diferentes tipos de consulta - MELHORADAS
 KEYWORDS_MAPPING = {
@@ -63,6 +55,7 @@ KEYWORDS_MAPPING = {
     'garantia_produto': ['garantia', 'cobertura', 'prazo de garantia', 'política de garantia'],
     'produto_geral': ['relógio', 'produto', 'modelo', 'linha', 'coleção']
 }
+
 
 
 def corrigir_texto_pt(texto):
@@ -308,31 +301,27 @@ def buscar_atendimento_inteligente(question: str, client_id: str) -> Optional[st
 
 
 def create_enhanced_retriever():
-    """Cria um retriever melhorado com chunking inteligente"""
     documents = load_documents_enhanced("documents")
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split_documents = splitter.split_documents(documents)
 
-    # Usa chunking mais inteligente
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len,
-        separators=["\n\n", "\n", ". ", " ", ""]
-    )
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
-    split_documents = text_splitter.split_documents(documents)
+    base_vectorstore = FAISS.from_documents(split_documents, embeddings)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        model_kwargs={'device': 'cuda'}
-    )
+    # Carrega base adicional com feedbacks (se existir)
+    try:
+        feedback_vectorstore = FAISS.load_local(
+            "vectorstore_feedback_patch",
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+        print(f"Base de feedback carregada com {len(feedback_vectorstore.index_to_docstore_id)} vetores.")
+        base_vectorstore.merge_from(feedback_vectorstore)
+    except Exception as e:
+        print("Erro ao carregar base de feedback:", e)
 
-    vectorstore = FAISS.from_documents(split_documents, embeddings)
-
-    # Retorna mais documentos relevantes
-    return vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 5}
-    )
+    return base_vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
 
 
 def load_documents_enhanced(folder_path):
